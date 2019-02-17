@@ -2,8 +2,15 @@
 # shellcheck disable=SC2119,SC1091
 
 run_stage(){
-	log "Begin ${STAGE_DIR}"
+        STAGE_DIR=$1
 	STAGE="$(basename "${STAGE_DIR}")"
+
+	if [ ! -z "$2" ]; then
+		STAGE_DIR="${STAGE_DIR}/$2"
+	fi
+
+        log "Begin ${STAGE_DIR}"
+
 	STAGE_WORK_DIR="${WORK_DIR}/${STAGE}"
 	pushd "${STAGE_DIR}" > /dev/null
 
@@ -27,23 +34,14 @@ run_stage(){
         	# iterate different files
 	        for i in {00..99}; do
         	    if [ -x ${i}-run.sh ]; then
-			SKIP_STEP="${STAGE_DIR}/SKIP_STEP${i}"
-	        	if [ ! -f "${SKIP_STEP}" ]; then
-	                	log "Begin ${STAGE_DIR}/${i}-run.sh"
-        	        	./${i}-run.sh
-                		log "End ${STAGE_DIR}/${i}-run.sh"
-				touch "${SKIP_STEP}"
-				
-			fi
+                	log "Begin ${STAGE_DIR}/${i}-run.sh"
+       	        	./${i}-run.sh
+               		log "End ${STAGE_DIR}/${i}-run.sh"
 	            fi
         	    if [ -f ${i}-run-chroot.sh ]; then
-			SKIP_CH_STEP="${STAGE_DIR}/SKIP_CH_STEP${i}"
-	        	if [ ! -f "${SKIP_CH_STEP}" ]; then
-                		log "Begin ${STAGE_DIR}/${i}-run-chroot.sh"
-	                	on_chroot < ${i}-run-chroot.sh
-	                	log "End ${STAGE_DIR}/${i}-run-chroot.sh"
-				touch "${SKIP_CH_STEP}"
-			fi
+               		log "Begin ${STAGE_DIR}/${i}-run-chroot.sh"
+                	on_chroot < ${i}-run-chroot.sh
+                	log "End ${STAGE_DIR}/${i}-run-chroot.sh"
         	    fi
 	        done
 	fi
@@ -77,23 +75,45 @@ if [ -z "${IMG_NAME}" ]; then
 	exit 1
 fi
 
-# Variables
-export IMG_DATE="${IMG_DATE:-"$(date +%Y-%m-%d)"}"
-
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export SCRIPT_DIR="${BASE_DIR}/scripts"
+export IMG_DATE="${IMG_DATE:-"$(date +%Y-%m-%d)"}"
 export WORK_DIR="${BASE_DIR}/work"
 export DEPLOY_DIR=${DEPLOY_DIR:-"${BASE_DIR}/deploy"}
 export LOG_FILE="${WORK_DIR}/build.log"
 
+# shellcheck source=scripts/common
+source "${SCRIPT_DIR}/common"
+
+# Arguments
+BUILDTARGET=$1
+
+if [ ! ${BUILDTARGET} ]; then
+  log "No buildtarget specified, assuming RASPBERRYPI"
+  BUILDTARGET="RASPBERRYPI"
+fi
+
+export BUILDTARGET=${BUILDTARGET}
+
+log "Build target is: ${BUILDTARGET}"
+
+# Variables
 mkdir -p "${WORK_DIR}"
 
-# Get the dynamic information from the image
-curl $BASE_IMAGE_URL/$BASE_IMAGE".info" > $WORK_DIR/infofile
+# Pi specific, move?
+if [ ${BUILDTARGET} = "RASPBERRYPI" ]; then
+	# Get the dynamic information from the image
+	curl $BASE_IMAGE_URL/$BASE_IMAGE".info" > $WORK_DIR/infofile
 
-GIT_KERNEL_SHA1=$(cat $WORK_DIR/infofile | grep -Po '\b(Kernel: https:\/\/github\.com\/raspberrypi\/linux\/tree\/\K)+(.*)$')
-KERNEL_VERSION_V7=$(cat $WORK_DIR/infofile | grep -Po '\b(Uname string: Linux version )\K(?<price>[^\ ]+)')
-KERNEL_VERSION=${KERNEL_VERSION_V7%"-v7+"}"+"
+	GIT_KERNEL_SHA1=$(cat $WORK_DIR/infofile | grep -Po '\b(Kernel: https:\/\/github\.com\/raspberrypi\/linux\/tree\/\K)+(.*)$')
+	KERNEL_VERSION_V7=$(cat $WORK_DIR/infofile | grep -Po '\b(Uname string: Linux version )\K(?<price>[^\ ]+)')
+	KERNEL_VERSION=${KERNEL_VERSION_V7%"-v7+"}"+"
+
+	log "IMG ${BASE_IMAGE}"
+	log "SHA ${GIT_KERNEL_SHA1}"
+	log "V7  ${KERNEL_VERSION_V7}"
+	log "VER ${KERNEL_VERSION}"
+fi
 
 export BASE_DIR
 
@@ -117,19 +137,16 @@ export ROOTFS_DIR
 export PREV_ROOTFS_DIR
 export IMG_SUFFIX
 
-# shellcheck source=scripts/common
-source "${SCRIPT_DIR}/common"
-
-log "IMG ${BASE_IMAGE}"
-log "SHA ${GIT_KERNEL_SHA1}"
-log "V7  ${KERNEL_VERSION_V7}"
-log "VER ${KERNEL_VERSION}"
 log "Begin ${BASE_DIR}"
 
 # Iterate trough the steps
-for STAGE_DIR in "${BASE_DIR}/stages/"*; do
-	if [ -d "${STAGE_DIR}" ]; then
-		run_stage
+for STAGE_FOLDER in "${BASE_DIR}/stages/"*; do
+	if [ -d "${STAGE_FOLDER}" ]; then
+		if [ -d "${STAGE_FOLDER}/${BUILDTARGET}" ]; then
+			run_stage "${STAGE_FOLDER}" "${BUILDTARGET}" 
+		else
+			run_stage "${STAGE_FOLDER}"
+		fi
 	fi
 done
 
